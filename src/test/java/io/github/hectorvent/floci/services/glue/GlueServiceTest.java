@@ -402,6 +402,87 @@ class GlueServiceTest {
     }
 
     @Test
+    void catalogNamesAreCaseInsensitiveAcrossApis() {
+        glueService.createDatabase(new Database("MixedCaseDatabase"));
+
+        assertEquals("mixedcasedatabase", glueService.getDatabase("MixedCaseDatabase").getName());
+        assertEquals("mixedcasedatabase", glueService.getDatabase("mixedcasedatabase").getName());
+        assertTrue(glueService.getDatabases().stream()
+                .map(Database::getName)
+                .toList()
+                .contains("mixedcasedatabase"));
+        AwsException databaseExists = assertThrows(AwsException.class,
+                () -> glueService.createDatabase(new Database("MIXEDCASEDATABASE")));
+        assertEquals("AlreadyExistsException", databaseExists.getErrorCode());
+
+        Table table = new Table();
+        table.setName("MixedCaseTable");
+        glueService.createTable("MixedCaseDatabase", table);
+        Table duplicateTable = new Table();
+        duplicateTable.setName("MIXEDCASETABLE");
+        AwsException tableExists = assertThrows(AwsException.class,
+                () -> glueService.createTable("MIXEDCASEDATABASE", duplicateTable));
+        assertEquals("AlreadyExistsException", tableExists.getErrorCode());
+        Table fetchedTable = glueService.getTable("mixedcasedatabase", "MIXEDCASETABLE");
+        assertEquals("mixedcasedatabase", fetchedTable.getDatabaseName());
+        assertEquals("mixedcasetable", fetchedTable.getName());
+        assertEquals(List.of("mixedcasetable"), glueService.getTables("MIXEDCASEDATABASE").stream()
+                .map(Table::getName)
+                .toList());
+
+        Table replacement = new Table();
+        replacement.setName("MIXEDCASETABLE");
+        replacement.setDescription("updated");
+        glueService.updateTable("MIXEDCASEDATABASE", replacement, fetchedTable.getVersionId());
+        assertEquals("updated", glueService.getTable("mixedcasedatabase", "mixedcasetable").getDescription());
+
+        Partition partition = new Partition();
+        partition.setValues(List.of("2026"));
+        glueService.createPartition("MIXEDCASEDATABASE", "MIXEDCASETABLE", partition);
+        Partition fetchedPartition = glueService.getPartitions("mixedcasedatabase", "mixedcasetable").get(0);
+        assertEquals("mixedcasedatabase", fetchedPartition.getDatabaseName());
+        assertEquals("mixedcasetable", fetchedPartition.getTableName());
+
+        UserDefinedFunction function = new UserDefinedFunction();
+        function.setFunctionName("MixedCaseFunction");
+        glueService.createUserDefinedFunction("mixedcasedatabase", function);
+        UserDefinedFunction duplicateFunction = new UserDefinedFunction();
+        duplicateFunction.setFunctionName("MIXEDCASEFUNCTION");
+        AwsException functionExists = assertThrows(AwsException.class,
+                () -> glueService.createUserDefinedFunction("MIXEDCASEDATABASE", duplicateFunction));
+        assertEquals("AlreadyExistsException", functionExists.getErrorCode());
+        UserDefinedFunction fetchedFunction = glueService.getUserDefinedFunction("MixedCaseDatabase", "MIXEDCASEFUNCTION");
+        assertEquals("mixedcasedatabase", fetchedFunction.getDatabaseName());
+        assertEquals("mixedcasefunction", fetchedFunction.getFunctionName());
+        GlueService.UserDefinedFunctionPage functions = glueService.getUserDefinedFunctions(
+                "MIXEDCASEDATABASE", "mixedcase.*", null, 1, null);
+        assertEquals(1, functions.functions().size());
+        assertNull(functions.nextToken());
+
+        UserDefinedFunction replacementFunction = new UserDefinedFunction();
+        replacementFunction.setFunctionName("ignored-name");
+        replacementFunction.setOwnerName("new-owner");
+        glueService.updateUserDefinedFunction("MIXEDCASEDATABASE", "MIXEDCASEFUNCTION", replacementFunction);
+        assertEquals("new-owner", glueService.getUserDefinedFunction("mixedcasedatabase", "mixedcasefunction").getOwnerName());
+
+        glueService.deleteUserDefinedFunction("MIXEDCASEDATABASE", "MIXEDCASEFUNCTION");
+        assertThrows(AwsException.class,
+                () -> glueService.getUserDefinedFunction("mixedcasedatabase", "mixedcasefunction"));
+
+        glueService.deleteTable("MIXEDCASEDATABASE", "MIXEDCASETABLE");
+        assertThrows(AwsException.class,
+                () -> glueService.getTable("mixedcasedatabase", "mixedcasetable"));
+
+        Table tableDeletedWithDatabase = new Table();
+        tableDeletedWithDatabase.setName("MixedCaseTableDeletedWithDatabase");
+        glueService.createTable("mixedcasedatabase", tableDeletedWithDatabase);
+        glueService.deleteDatabase("MIXEDCASEDATABASE");
+        assertThrows(AwsException.class, () -> glueService.getDatabase("mixedcasedatabase"));
+        assertThrows(AwsException.class,
+                () -> glueService.getTable("mixedcasedatabase", "mixedcasetabledeletedwithdatabase"));
+    }
+
+    @Test
     void getTableVersionsReturnsEmptyListForAthenaCompatibility() {
         assertTrue(glueService.getTableVersions().isEmpty());
     }
