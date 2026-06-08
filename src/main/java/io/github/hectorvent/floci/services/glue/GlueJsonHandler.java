@@ -63,6 +63,12 @@ public class GlueJsonHandler {
                 glueService.deleteDatabase(name);
                 yield Response.ok().build();
             }
+            case "UpdateDatabase" -> {
+                String name = request.get("Name").asText();
+                Database db = mapper.treeToValue(request.get("DatabaseInput"), Database.class);
+                glueService.updateDatabase(name, db);
+                yield Response.ok().build();
+            }
             case "CreateTable" -> {
                 String dbName = request.get("DatabaseName").asText();
                 Table table = mapper.treeToValue(request.get("TableInput"), Table.class);

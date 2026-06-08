@@ -104,6 +104,25 @@ function_input() {
     found=$(echo "$output" | jq --arg name "$DB_NAME" '.DatabaseList | any(.Name == $name)')
     [ "$found" = "true" ]
 
+    run aws_cmd glue update-database \
+        --name "$DB_NAME" \
+        --database-input "{\"Name\":\"$DB_NAME\",\"Description\":\"updated database\",\"LocationUri\":\"s3://floci-glue-catalog/$DB_NAME/\"}"
+    assert_success
+
+    run aws_cmd glue get-database --name "$DB_NAME"
+    assert_success
+    description=$(json_get "$output" '.Database.Description')
+    location=$(json_get "$output" '.Database.LocationUri')
+    [ "$description" = "updated database" ]
+    [ "$location" = "s3://floci-glue-catalog/$DB_NAME/" ]
+
+    run aws_cmd glue update-database \
+        --name "$DB_NAME" \
+        --database-input "{\"Name\":\"${DB_NAME}-renamed\",\"Description\":\"renamed database\"}"
+    assert_failure
+    [[ "$output" == *"InvalidInputException"* ]]
+    [[ "$output" == *"Database cannot be renamed"* ]]
+
     run aws_cmd glue delete-database --name "$DB_NAME"
     assert_success
 

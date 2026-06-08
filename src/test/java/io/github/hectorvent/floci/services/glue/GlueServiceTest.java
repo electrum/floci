@@ -85,6 +85,36 @@ class GlueServiceTest {
     }
 
     @Test
+    void updateDatabaseUpdatesMetadata() {
+        assertNotNull(glueService.getDatabase("db1"));
+
+        Database database = new Database("db1");
+        database.setDescription("updated");
+        database.setLocationUri("s3://bucket/database/");
+        database.setParameters(Map.of("owner", "test"));
+
+        glueService.updateDatabase("db1", database);
+
+        Database updated = glueService.getDatabase("db1");
+        assertEquals("db1", updated.getName());
+        assertEquals("updated", updated.getDescription());
+        assertEquals("s3://bucket/database/", updated.getLocationUri());
+        assertEquals("test", updated.getParameters().get("owner"));
+    }
+
+    @Test
+    void updateDatabaseRejectsRename() {
+        assertNotNull(glueService.getDatabase("db1"));
+
+        Database database = new Database("renamed");
+
+        AwsException exception = assertThrows(AwsException.class, () -> glueService.updateDatabase("db1", database));
+
+        assertEquals("InvalidInputException", exception.getErrorCode());
+        assertEquals("Database cannot be renamed", exception.getMessage());
+    }
+
+    @Test
     void getTableWithValidSchemaReferenceReturnsDerivedColumns() {
         schemaRegistryService.createRegistry("r1", null, null, REGION);
         schemaRegistryService.createSchema(new RegistryId("r1", null),

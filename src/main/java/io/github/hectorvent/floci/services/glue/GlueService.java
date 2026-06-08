@@ -91,6 +91,22 @@ public class GlueService {
         return databaseStore.scan(k -> true);
     }
 
+    public void updateDatabase(String name, Database database) {
+        Database existing = getDatabase(name);
+        String databaseName = normalizeName(database.getName());
+        if (!existing.getName().equals(databaseName)) {
+            throw new AwsException("InvalidInputException", "Database cannot be renamed", 400);
+        }
+        Database updated = new Database();
+        updated.setName(databaseName);
+        updated.setDescription(database.getDescription());
+        updated.setLocationUri(database.getLocationUri());
+        updated.setParameters(database.getParameters() == null ? null : new LinkedHashMap<>(database.getParameters()));
+        updated.setCreateTime(existing.getCreateTime());
+        databaseStore.put(databaseName, updated);
+        LOG.infov("Updated Glue Database: {0}", databaseName);
+    }
+
     public void deleteDatabase(String name) {
         String databaseName = getDatabase(name).getName();
         List<String> tableNames = tableStore.scan(k -> true).stream()
