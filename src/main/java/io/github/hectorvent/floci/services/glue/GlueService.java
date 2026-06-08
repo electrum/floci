@@ -38,9 +38,11 @@ public class GlueService {
     private static final Logger LOG = Logger.getLogger(GlueService.class);
     private static final int MAX_FUNCTION_PATTERN_LENGTH = 255;
     private static final int MAX_FUNCTION_RESULTS = 100;
+    static final String COLUMN_NAME = "ColumnName";
 
     private final StorageBackend<String, Database> databaseStore;
     private final StorageBackend<String, Table> tableStore;
+    private final StorageBackend<String, Map<String, Object>> columnStatisticsStore;
     private final StorageBackend<String, Partition> partitionStore;
     private final StorageBackend<String, UserDefinedFunction> functionStore;
     private final GlueSchemaRegistryService schemaRegistryService;
@@ -52,6 +54,7 @@ public class GlueService {
                        RegionResolver regionResolver) {
         this.databaseStore = storageFactory.create("glue", "databases.json", new TypeReference<>() {});
         this.tableStore = storageFactory.create("glue", "tables.json", new TypeReference<>() {});
+        this.columnStatisticsStore = storageFactory.create("glue", "column_statistics.json", new TypeReference<>() {});
         this.partitionStore = storageFactory.create("glue", "partitions.json", new TypeReference<>() {});
         this.functionStore = storageFactory.create("glue", "functions.json", new TypeReference<>() {});
         this.schemaRegistryService = schemaRegistryService;
@@ -60,12 +63,14 @@ public class GlueService {
 
     GlueService(StorageBackend<String, Database> databaseStore,
                 StorageBackend<String, Table> tableStore,
+                StorageBackend<String, Map<String, Object>> columnStatisticsStore,
                 StorageBackend<String, Partition> partitionStore,
                 StorageBackend<String, UserDefinedFunction> functionStore,
                 GlueSchemaRegistryService schemaRegistryService,
                 RegionResolver regionResolver) {
         this.databaseStore = databaseStore;
         this.tableStore = tableStore;
+        this.columnStatisticsStore = columnStatisticsStore;
         this.partitionStore = partitionStore;
         this.functionStore = functionStore;
         this.schemaRegistryService = schemaRegistryService;
@@ -166,6 +171,9 @@ public class GlueService {
     public void deleteTable(String databaseName, String tableName) {
         String key = tableKey(databaseName, tableName);
         tableStore.delete(key);
+        columnStatisticsStore.keys().stream()
+                .filter(statisticsKey -> statisticsKey.startsWith(key + ":"))
+                .forEach(columnStatisticsStore::delete);
         partitionStore.scan(k -> k.startsWith(key + ":")).forEach(p -> {
             partitionStore.delete(key + ":" + String.join(",", p.getValues()));
         });
@@ -187,6 +195,34 @@ public class GlueService {
             deleteTable(databaseName, tableName);
         }
         return errors;
+    }
+
+    public void updateColumnStatisticsForTable(
+            String databaseName,
+            String tableName,
+            List<Map<String, Object>> columnStatistics) {
+        Table table = getTable(databaseName, tableName);
+        for (Map<String, Object> statistics : columnStatistics) {
+            Object columnName = statistics.get(COLUMN_NAME);
+            if (columnName != null) {
+                columnStatisticsStore.put(
+                        columnStatisticsKey(table.getDatabaseName(), table.getName(), columnName.toString()),
+                        new LinkedHashMap<>(statistics));
+            }
+        }
+    }
+
+    public List<Map<String, Object>> getColumnStatisticsForTable(
+            String databaseName,
+            String tableName,
+            List<String> columnNames) {
+        Table table = getTable(databaseName, tableName);
+        List<Map<String, Object>> columnStatistics = new ArrayList<>();
+        for (String columnName : columnNames) {
+            columnStatisticsStore.get(columnStatisticsKey(table.getDatabaseName(), table.getName(), columnName))
+                    .ifPresent(statistics -> columnStatistics.add(new LinkedHashMap<>(statistics)));
+        }
+        return columnStatistics;
     }
 
     public void createPartition(String databaseName, String tableName, Partition partition) {
@@ -318,6 +354,10 @@ public class GlueService {
 
     private static String tableKey(String databaseName, String tableName) {
         return normalizeName(databaseName) + ":" + normalizeName(tableName);
+    }
+
+    private static String columnStatisticsKey(String databaseName, String tableName, String columnName) {
+        return tableKey(databaseName, tableName) + ":" + normalizeName(columnName);
     }
 
     private static String normalizeName(String name) {

@@ -20,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -46,6 +47,7 @@ class GlueServiceTest {
     private GlueService glueService;
     private GlueSchemaRegistryService schemaRegistryService;
     private StorageBackend<String, Table> tableStore;
+    private StorageBackend<String, Map<String, Object>> columnStatisticsStore;
     private StorageBackend<String, Partition> partitionStore;
 
     @BeforeEach
@@ -54,10 +56,12 @@ class GlueServiceTest {
         StorageFactory storageFactory = new InMemoryStorageFactory();
         schemaRegistryService = new GlueSchemaRegistryService(storageFactory, regionResolver);
         tableStore = new InMemoryStorage<>();
+        columnStatisticsStore = new InMemoryStorage<>();
         partitionStore = new InMemoryStorage<>();
         glueService = new GlueService(
                 new InMemoryStorage<String, Database>(),
                 tableStore,
+                columnStatisticsStore,
                 partitionStore,
                 new InMemoryStorage<String, UserDefinedFunction>(),
                 schemaRegistryService, regionResolver);
@@ -502,6 +506,42 @@ class GlueServiceTest {
         AwsException ex = assertThrows(AwsException.class,
                 () -> glueService.getTable("db1", "existing"));
         assertEquals("EntityNotFoundException", ex.getErrorCode());
+    }
+
+    @Test
+    void columnStatisticsCanBeUpdatedAndRetrieved() {
+        Table table = new Table();
+        table.setName("plain");
+        glueService.createTable("db1", table);
+        Map<String, Object> statistics = new LinkedHashMap<>();
+        statistics.put(GlueService.COLUMN_NAME, "id");
+        statistics.put("ColumnType", "int");
+        statistics.put("StatisticsData", Map.of(
+                "Type", "LONG",
+                "LongColumnStatisticsData", Map.of(
+                        "MinimumValue", 1,
+                        "MaximumValue", 10,
+                        "NumberOfNulls", 0,
+                        "NumberOfDistinctValues", 10)));
+
+        glueService.updateColumnStatisticsForTable("db1", "plain", List.of(statistics));
+
+        List<Map<String, Object>> fetched = glueService.getColumnStatisticsForTable("db1", "plain", List.of("id"));
+        assertEquals(1, fetched.size());
+        assertEquals("id", fetched.get(0).get(GlueService.COLUMN_NAME));
+        assertEquals("LONG", ((Map<?, ?>) fetched.get(0).get("StatisticsData")).get("Type"));
+    }
+
+    @Test
+    void deleteTableDeletesColumnStatistics() {
+        Table table = new Table();
+        table.setName("plain");
+        glueService.createTable("db1", table);
+        glueService.updateColumnStatisticsForTable("db1", "plain", List.of(Map.of(GlueService.COLUMN_NAME, "id")));
+
+        glueService.deleteTable("db1", "plain");
+
+        assertTrue(columnStatisticsStore.scan(k -> true).isEmpty());
     }
 
     @Test

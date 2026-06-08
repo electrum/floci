@@ -71,6 +71,25 @@ create_table() {
         --table-input "$(table_input "$name" "$description")" >/dev/null
 }
 
+column_statistics_input() {
+    jq -n '[
+        {
+            ColumnName: "id",
+            ColumnType: "int",
+            AnalyzedTime: "2026-06-08T00:00:00Z",
+            StatisticsData: {
+                Type: "LONG",
+                LongColumnStatisticsData: {
+                    MinimumValue: 1,
+                    MaximumValue: 10,
+                    NumberOfNulls: 0,
+                    NumberOfDistinctValues: 10
+                }
+            }
+        }
+    ]'
+}
+
 function_input() {
     local owner="$1"
     jq -n \
@@ -148,6 +167,24 @@ function_input() {
     version_id=$(json_get "$output" '.Table.VersionId')
     [ "$description" = "updated" ]
     [ "$version_id" = "1" ]
+
+    run aws_cmd glue update-column-statistics-for-table \
+        --database-name "$DB_NAME" \
+        --table-name "$TABLE_NAME" \
+        --column-statistics-list "$(column_statistics_input)"
+    assert_success
+
+    run aws_cmd glue get-column-statistics-for-table \
+        --database-name "$DB_NAME" \
+        --table-name "$TABLE_NAME" \
+        --column-names id
+    assert_success
+    column_name=$(json_get "$output" '.ColumnStatisticsList[0].ColumnName')
+    statistics_type=$(json_get "$output" '.ColumnStatisticsList[0].StatisticsData.Type')
+    minimum_value=$(json_get "$output" '.ColumnStatisticsList[0].StatisticsData.LongColumnStatisticsData.MinimumValue')
+    [ "$column_name" = "id" ]
+    [ "$statistics_type" = "LONG" ]
+    [ "$minimum_value" = "1" ]
 
     run aws_cmd glue create-partition \
         --database-name "$DB_NAME" \
