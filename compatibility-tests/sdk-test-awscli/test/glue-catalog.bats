@@ -4,6 +4,7 @@ setup() {
     load 'test_helper/common-setup'
     DB_NAME="$(unique_name glue-catalog-db)"
     TABLE_NAME="catalog_table"
+    SECOND_TABLE_NAME="catalog_table_second"
     FUNCTION_NAME="catalog_function"
 }
 
@@ -11,6 +12,9 @@ teardown() {
     aws_cmd glue delete-user-defined-function \
         --database-name "$DB_NAME" \
         --function-name "$FUNCTION_NAME" >/dev/null 2>&1 || true
+    aws_cmd glue delete-table \
+        --database-name "$DB_NAME" \
+        --name "$SECOND_TABLE_NAME" >/dev/null 2>&1 || true
     aws_cmd glue delete-table \
         --database-name "$DB_NAME" \
         --name "$TABLE_NAME" >/dev/null 2>&1 || true
@@ -24,11 +28,12 @@ create_database() {
 }
 
 table_input() {
-    local description="$1"
+    local name="${1:-$TABLE_NAME}"
+    local description="$2"
     jq -n \
-        --arg name "$TABLE_NAME" \
+        --arg name "$name" \
         --arg description "$description" \
-        --arg location "s3://floci-glue-catalog/$DB_NAME/$TABLE_NAME/" \
+        --arg location "s3://floci-glue-catalog/$DB_NAME/$name/" \
         '{
             Name: $name,
             Description: $description,
@@ -56,9 +61,11 @@ table_input() {
 }
 
 create_table() {
+    local name="${1:-$TABLE_NAME}"
+    local description="${2:-created}"
     aws_cmd glue create-table \
         --database-name "$DB_NAME" \
-        --table-input "$(table_input created)" >/dev/null
+        --table-input "$(table_input "$name" "$description")" >/dev/null
 }
 
 function_input() {
@@ -125,7 +132,7 @@ function_input() {
     run aws_cmd glue update-table \
         --database-name "$DB_NAME" \
         --version-id "$version_id" \
-        --table-input "$(table_input updated)"
+        --table-input "$(table_input "$TABLE_NAME" updated)"
     assert_success
 
     run aws_cmd glue get-table \
@@ -158,6 +165,34 @@ function_input() {
     run aws_cmd glue get-table \
         --database-name "$DB_NAME" \
         --name "$TABLE_NAME"
+    assert_failure
+}
+
+@test "Glue catalog: batch delete table" {
+    run create_database
+    assert_success
+
+    run create_table "$TABLE_NAME" "batch delete first table"
+    assert_success
+
+    run create_table "$SECOND_TABLE_NAME" "batch delete second table"
+    assert_success
+
+    run aws_cmd glue batch-delete-table \
+        --database-name "$DB_NAME" \
+        --tables-to-delete "$TABLE_NAME" "$SECOND_TABLE_NAME"
+    assert_success
+    error_count=$(echo "$output" | jq '.Errors | length')
+    [ "$error_count" = "0" ]
+
+    run aws_cmd glue get-table \
+        --database-name "$DB_NAME" \
+        --name "$TABLE_NAME"
+    assert_failure
+
+    run aws_cmd glue get-table \
+        --database-name "$DB_NAME" \
+        --name "$SECOND_TABLE_NAME"
     assert_failure
 }
 

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.glue.GlueClient;
+import software.amazon.awssdk.services.glue.model.BatchDeleteTableRequest;
 import software.amazon.awssdk.services.glue.model.Column;
 import software.amazon.awssdk.services.glue.model.CreateDatabaseRequest;
 import software.amazon.awssdk.services.glue.model.CreatePartitionRequest;
@@ -43,7 +44,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class GlueCatalogTest {
 
     private static final String DATABASE_NAME = TestFixtures.uniqueName("catalog_db");
+    private static final String BATCH_DELETE_DATABASE_NAME = TestFixtures.uniqueName("catalog_batch_delete_db");
     private static final String TABLE_NAME = "catalog_table";
+    private static final String SECOND_TABLE_NAME = "catalog_table_second";
     private static final String FUNCTION_NAME = "catalog_function";
 
     private static GlueClient glue;
@@ -67,8 +70,21 @@ class GlueCatalogTest {
         catch (Exception ignored) {}
         try {
             glue.deleteTable(DeleteTableRequest.builder()
+                    .databaseName(BATCH_DELETE_DATABASE_NAME)
+                    .name(SECOND_TABLE_NAME)
+                    .build());
+        }
+        catch (Exception ignored) {}
+        try {
+            glue.deleteTable(DeleteTableRequest.builder()
                     .databaseName(DATABASE_NAME)
                     .name(TABLE_NAME)
+                    .build());
+        }
+        catch (Exception ignored) {}
+        try {
+            glue.deleteDatabase(DeleteDatabaseRequest.builder()
+                    .name(BATCH_DELETE_DATABASE_NAME)
                     .build());
         }
         catch (Exception ignored) {}
@@ -204,13 +220,61 @@ class GlueCatalogTest {
                 .isInstanceOf(EntityNotFoundException.class);
     }
 
-    private static TableInput tableInput(String description) {
-        return TableInput.builder()
+    @Test
+    void batchDeleteTable() {
+        glue.createDatabase(CreateDatabaseRequest.builder()
+                .databaseInput(DatabaseInput.builder()
+                        .name(BATCH_DELETE_DATABASE_NAME)
+                        .description("catalog batch delete database")
+                        .build())
+                .build());
+
+        glue.createTable(CreateTableRequest.builder()
+                .databaseName(BATCH_DELETE_DATABASE_NAME)
+                .tableInput(tableInput(BATCH_DELETE_DATABASE_NAME, TABLE_NAME, "batch delete first table"))
+                .build());
+        glue.createTable(CreateTableRequest.builder()
+                .databaseName(BATCH_DELETE_DATABASE_NAME)
+                .tableInput(tableInput(BATCH_DELETE_DATABASE_NAME, SECOND_TABLE_NAME, "batch delete second table"))
+                .build());
+
+        var response = glue.batchDeleteTable(BatchDeleteTableRequest.builder()
+                .databaseName(BATCH_DELETE_DATABASE_NAME)
+                .tablesToDelete(TABLE_NAME, SECOND_TABLE_NAME)
+                .build());
+        assertThat(response.errors()).isEmpty();
+
+        assertThatThrownBy(() -> glue.getTable(GetTableRequest.builder()
+                .databaseName(BATCH_DELETE_DATABASE_NAME)
                 .name(TABLE_NAME)
+                .build()))
+                .isInstanceOf(EntityNotFoundException.class);
+        assertThatThrownBy(() -> glue.getTable(GetTableRequest.builder()
+                .databaseName(BATCH_DELETE_DATABASE_NAME)
+                .name(SECOND_TABLE_NAME)
+                .build()))
+                .isInstanceOf(EntityNotFoundException.class);
+
+        glue.deleteDatabase(DeleteDatabaseRequest.builder()
+                .name(BATCH_DELETE_DATABASE_NAME)
+                .build());
+    }
+
+    private static TableInput tableInput(String description) {
+        return tableInput(TABLE_NAME, description);
+    }
+
+    private static TableInput tableInput(String tableName, String description) {
+        return tableInput(DATABASE_NAME, tableName, description);
+    }
+
+    private static TableInput tableInput(String databaseName, String tableName, String description) {
+        return TableInput.builder()
+                .name(tableName)
                 .description(description)
                 .parameters(Map.of("classification", "json"))
                 .storageDescriptor(StorageDescriptor.builder()
-                        .location("s3://floci-glue-catalog/" + DATABASE_NAME + "/" + TABLE_NAME + "/")
+                        .location("s3://floci-glue-catalog/" + databaseName + "/" + tableName + "/")
                         .inputFormat("org.apache.hadoop.mapred.TextInputFormat")
                         .outputFormat("org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat")
                         .serdeInfo(SerDeInfo.builder()
