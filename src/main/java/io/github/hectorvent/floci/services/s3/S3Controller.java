@@ -490,11 +490,6 @@ public class S3Controller {
                 return handleCopyObject(copySource, bucket, key, contentType, httpHeaders);
             }
 
-            Response preconditionResponse = checkWritePreconditions(bucket, key, ifMatch, ifNoneMatch);
-            if (preconditionResponse != null) {
-                return preconditionResponse;
-            }
-
             Map<String, String> inlineTags = parseInlineTaggingHeader(tagging);
 
             String lockMode = httpHeaders.getHeaderString("x-amz-object-lock-mode");
@@ -529,6 +524,8 @@ public class S3Controller {
                             .withAcl(cannedAcl)
                             .withChecksumAlgorithm(checksumAlgorithm)
                             .withClientChecksum(extractChecksumFromHeaders(httpHeaders))
+                            .withIfMatch(ifMatch)
+                            .withIfNoneMatch(ifNoneMatch)
                             .withTagging(inlineTags));
             var resp = Response.ok().header("ETag", obj.getETag());
             if (obj.getVersionId() != null) {
@@ -1973,14 +1970,25 @@ public class S3Controller {
     }
 
     private Response xmlErrorResponse(AwsException e) {
+        String condition = e instanceof S3PreconditionFailedException preconditionFailedException
+                ? preconditionFailedException.condition()
+                : null;
+        return xmlErrorResponse(e, condition);
+    }
+
+    private Response xmlErrorResponse(AwsException e, String condition) {
         if (e.getMessage() == null) {
             return Response.status(e.getHttpStatus()).build();
         }
-        String xml = new XmlBuilder()
+        XmlBuilder xmlBuilder = new XmlBuilder()
                 .raw("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
                 .start("Error")
                 .elem("Code", e.getErrorCode())
-                .elem("Message", e.getMessage())
+                .elem("Message", e.getMessage());
+        if (condition != null) {
+            xmlBuilder.elem("Condition", condition);
+        }
+        String xml = xmlBuilder
                 .elem("RequestId", java.util.UUID.randomUUID().toString())
                 .end("Error")
                 .build();
@@ -2033,10 +2041,10 @@ public class S3Controller {
         }
 
         if (ifMatch != null && !eTagMatches(ifMatch, existing.getETag())) {
-            return preconditionFailedResponse();
+            return preconditionFailedResponse("If-Match");
         }
         if (ifNoneMatch != null && eTagMatches(ifNoneMatch, existing.getETag())) {
-            return preconditionFailedResponse();
+            return preconditionFailedResponse("If-None-Match");
         }
         return null;
     }
@@ -2059,8 +2067,12 @@ public class S3Controller {
     }
 
     private Response preconditionFailedResponse() {
+        return preconditionFailedResponse(null);
+    }
+
+    private Response preconditionFailedResponse(String condition) {
         return xmlErrorResponse(new AwsException("PreconditionFailed",
-                "At least one of the pre-conditions you specified did not hold.", 412));
+                S3PreconditionFailedException.MESSAGE, 412), condition);
     }
 
     private boolean eTagMatches(String headerValue, String eTag) {
