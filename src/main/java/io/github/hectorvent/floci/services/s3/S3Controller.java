@@ -294,8 +294,8 @@ public class S3Controller {
                                 @QueryParam("key-marker") String keyMarker,
                                 @QueryParam("marker") String marker,
                                 @Context UriInfo uriInfo) {
-        validateRawUri();
         try {
+            validateRawUri();
             if (hasQueryParam(uriInfo, "uploads")) {
                 return handleListMultipartUploads(bucket);
             }
@@ -1973,6 +1973,9 @@ public class S3Controller {
     }
 
     private Response xmlErrorResponse(AwsException e) {
+        if (e.getMessage() == null) {
+            return Response.status(e.getHttpStatus()).build();
+        }
         String xml = new XmlBuilder()
                 .raw("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
                 .start("Error")
@@ -2482,6 +2485,7 @@ public class S3Controller {
      * that JAX-RS path normalization would otherwise strip.
      */
     private String extractObjectKey(UriInfo uriInfo, String bucket) {
+        validateRawUri();
         String rawUri = currentVertxRequest.getCurrent().request().uri();
         int qIdx = rawUri.indexOf('?');
         String rawPath = qIdx >= 0 ? rawUri.substring(0, qIdx) : rawUri;
@@ -2524,7 +2528,7 @@ public class S3Controller {
             decodedPath = URLDecoder.decode(rawPath, StandardCharsets.UTF_8);
         }
         catch (IllegalArgumentException e) {
-            throw new AwsException("InvalidKey", "The specified key is invalid.", 400);
+            throw new AwsException("BadRequest", null, 400);
         }
 
         String[] segments = decodedPath.split("/", -1);
@@ -2541,7 +2545,7 @@ public class S3Controller {
             }
             if ("..".equals(segment)) {
                 if (depth == 0) {
-                    throw new AwsException("InvalidKey", "The specified key is invalid.", 400);
+                    throw new AwsException("BadRequest", null, 400);
                 }
                 depth--;
             }
