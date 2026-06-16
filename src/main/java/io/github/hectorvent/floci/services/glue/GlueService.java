@@ -18,6 +18,7 @@ import io.github.hectorvent.floci.services.glue.schemaregistry.SchemaToColumnsCo
 import io.github.hectorvent.floci.services.glue.schemaregistry.model.SchemaId;
 import io.github.hectorvent.floci.services.glue.schemaregistry.model.SchemaVersion;
 import io.github.hectorvent.floci.services.resourcegroupstagging.ResourceGroupsTaggingService;
+import io.quarkus.runtime.annotations.RegisterForReflection;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -888,6 +889,7 @@ public class GlueService {
             @JsonProperty("PartitionValueList") List<String> partitionValueList,
             @JsonProperty("ErrorDetail") ErrorDetail errorDetail) {}
 
+    @RegisterForReflection
     public record ErrorDetail(
             @JsonProperty("ErrorCode") String errorCode,
             @JsonProperty("ErrorMessage") String errorMessage) {}
@@ -896,6 +898,7 @@ public class GlueService {
             @JsonProperty("ColumnStatisticsList") List<Map<String, Object>> columnStatisticsList,
             @JsonProperty("Errors") List<ColumnError> errors) {}
 
+    @RegisterForReflection
     public record ColumnError(
             @JsonProperty("ColumnName") String columnName,
             @JsonProperty("Error") ErrorDetail error) {}
