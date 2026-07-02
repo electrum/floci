@@ -49,6 +49,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
@@ -72,6 +74,7 @@ public class S3Controller {
     private static final DateTimeFormatter RFC_822 = DateTimeFormatter
             .ofPattern("EEE, dd MMM yyyy HH:mm:ss z", Locale.US)
             .withZone(ZoneId.of("GMT"));
+    private static final Pattern AUTHORIZATION_CREDENTIAL_PATTERN = Pattern.compile("Credential=([^/\\s,]+)");
     private static final XMLInputFactory NOTIFICATION_XML_FACTORY;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -368,6 +371,8 @@ public class S3Controller {
                 return Response.ok(s3Service.getBucketRequestPayment(bucket)).build();
             }
 
+            s3Service.authorizeListBucket(bucket, requestAuthorization(httpHeaders, uriInfo));
+
             // --- Website Hosting Redirection Logic ---
             if (isWebsiteRequest(httpHeaders) && (uriInfo.getQueryParameters().isEmpty() || (uriInfo.getQueryParameters().size() == 1 && hasQueryParam(uriInfo, "list-type")))) {
                 try {
@@ -589,6 +594,8 @@ public class S3Controller {
             if (uploadId != null) {
                 return handleListParts(bucket, key, uploadId, maxPartsQuery, partNumberMarkerQuery);
             }
+            s3Service.authorizeGetObject(bucket, key, versionId, requestAuthorization(httpHeaders, uriInfo));
+
             if (hasQueryParam(uriInfo, "tagging")) {
                 return handleGetObjectTagging(bucket, key);
             }
@@ -779,6 +786,8 @@ public class S3Controller {
                                @Context HttpHeaders httpHeaders) {
         try {
             key = extractObjectKey(uriInfo, bucket);
+            s3Service.authorizeGetObject(bucket, key, versionId, requestAuthorization(httpHeaders, uriInfo));
+
             S3Object obj = s3Service.headObject(bucket, key, versionId);
             S3Service.validateSseCustomerAccess(
                     obj,
@@ -2109,6 +2118,32 @@ public class S3Controller {
     private static boolean isSigned(HttpHeaders httpHeaders, UriInfo uriInfo) {
         return httpHeaders.getHeaderString("Authorization") != null
                 || uriInfo.getQueryParameters().containsKey("X-Amz-Algorithm");
+    }
+
+    private static S3Service.RequestAuthorization requestAuthorization(HttpHeaders httpHeaders, UriInfo uriInfo) {
+        String authorization = httpHeaders.getHeaderString("Authorization");
+        boolean presigned = uriInfo.getQueryParameters().containsKey("X-Amz-Algorithm");
+        String accessKeyId = extractAccessKeyId(authorization);
+        if (accessKeyId == null && presigned) {
+            accessKeyId = extractPresignedAccessKeyId(uriInfo.getQueryParameters().getFirst("X-Amz-Credential"));
+        }
+        return new S3Service.RequestAuthorization(authorization != null || presigned, presigned, accessKeyId);
+    }
+
+    private static String extractAccessKeyId(String authorization) {
+        if (authorization == null) {
+            return null;
+        }
+        Matcher matcher = AUTHORIZATION_CREDENTIAL_PATTERN.matcher(authorization);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private static String extractPresignedAccessKeyId(String credential) {
+        if (credential == null) {
+            return null;
+        }
+        int slash = credential.indexOf('/');
+        return slash >= 0 ? credential.substring(0, slash) : credential;
     }
 
     private boolean hasPreconditions(String ifMatch, String ifNoneMatch,
