@@ -147,6 +147,11 @@ class RdsServiceTest {
         kmsService = mock(KmsService.class);
         when(kmsService.describeKey(any(), any())).thenThrow(
                 new AwsException("NotFoundException", "Key not found", 404));
+        doAnswer(invocation -> {
+            KmsKey key = new KmsKey();
+            key.setArn("arn:aws:kms:" + invocation.getArgument(1) + ":123456789012:key/secrets-manager");
+            return key;
+        }).when(kmsService).describeKey(eq("alias/aws/secretsmanager"), any());
         config = mock(EmulatorConfig.class);
         EmulatorConfig.ServicesConfig servicesConfig = mock(EmulatorConfig.ServicesConfig.class);
         rdsConfig = mock(EmulatorConfig.RdsServiceConfig.class);
@@ -1206,6 +1211,22 @@ class RdsServiceTest {
 
         verify(secretsManager, never()).deleteSecret(any(), any(), anyBoolean(), any());
         assertEquals(0, service.listDbInstances(null).size());
+    }
+
+    @Test
+    void defaultManagedKeyResolutionFailureDoesNotCreateASecret() {
+        when(config.services().rds().mock()).thenReturn(true);
+        doThrow(new AwsException("NotFoundException", "Key not found", 404))
+                .when(kmsService).describeKey("alias/aws/secretsmanager", "us-east-1");
+        SecretsManagerService secretsManager = mock(SecretsManagerService.class);
+        RdsService service = newService(containerManager, proxyManager,
+                new InMemoryStorage<>(), new InMemoryStorage<>(),
+                new InMemoryStorage<>(), new InMemoryStorage<>(), secretsManager);
+        AwsException failure = assertThrows(AwsException.class, () ->
+                service.createDbInstance("mydb", "postgres", "13", "admin", null,
+                        "dbname", "db.t3.micro", 20, true, null, null, null, true, null));
+        assertEquals("NotFoundException", failure.getErrorCode());
+        verifyNoInteractions(secretsManager);
     }
 
     @Test

@@ -2533,6 +2533,8 @@ public class RdsService implements Resettable, ResourceProvider {
             throw new AwsException("InvalidParameterCombination",
                     "ManageMasterUserPassword requires Secrets Manager support.", 400);
         }
+        String effectiveKmsKeyId = kmsKeyId != null ? kmsKeyId
+                : kmsService.describeKey("alias/aws/secretsmanager", region).getArn();
         String secretName = "rds!" + instance.getDbiResourceId();
         // RDS owns the secret it manages: it rotates the master password itself, so the secret
         // carries no rotation Lambda. AWS marks that with OwningService and these two tags.
@@ -2550,7 +2552,7 @@ public class RdsService implements Resettable, ResourceProvider {
                 region);
         instance.setMasterUserSecretArn(secret.getArn());
         instance.setMasterUserSecretStatus("active");
-        instance.setMasterUserSecretKmsKeyId(kmsKeyId);
+        instance.setMasterUserSecretKmsKeyId(effectiveKmsKeyId);
     }
 
     private static String managedMasterSecretString(DbInstance instance) {
@@ -2575,6 +2577,8 @@ public class RdsService implements Resettable, ResourceProvider {
             throw new AwsException("InvalidParameterCombination",
                     "ManageMasterUserPassword requires Secrets Manager support.", 400);
         }
+        String effectiveKmsKeyId = kmsKeyId != null ? kmsKeyId
+                : kmsService.describeKey("alias/aws/secretsmanager", region).getArn();
         String secretName = "rds!" + cluster.getDbClusterResourceId();
         // RDS owns the secret it manages: it rotates the master password itself, so the secret
         // carries no rotation Lambda. AWS marks that with OwningService and these two tags.
@@ -2592,7 +2596,7 @@ public class RdsService implements Resettable, ResourceProvider {
                 region);
         cluster.setMasterUserSecretArn(secret.getArn());
         cluster.setMasterUserSecretStatus("active");
-        cluster.setMasterUserSecretKmsKeyId(kmsKeyId);
+        cluster.setMasterUserSecretKmsKeyId(effectiveKmsKeyId);
     }
 
     /**
