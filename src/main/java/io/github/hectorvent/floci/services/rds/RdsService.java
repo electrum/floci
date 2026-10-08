@@ -2283,6 +2283,9 @@ public class RdsService implements Resettable, ResourceProvider {
             if (!"rds".equals(arn.service())) {
                 throw new AwsException("InvalidParameterValue", "Invalid resource name: " + resourceName, 400);
             }
+            if (!AwsRegions.partitionFor(effectiveRegion).equals(arn.partition())) {
+                throw new AwsException("InvalidParameterValue", "Invalid resource name: " + resourceName, 400);
+            }
             if (!effectiveRegion.equals(arn.region())) {
                 throw new AwsException("InvalidParameterValue",
                         "ResourceName is not in region " + effectiveRegion + ": " + resourceName, 400);

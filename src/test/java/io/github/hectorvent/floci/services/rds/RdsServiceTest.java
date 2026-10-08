@@ -1895,6 +1895,30 @@ class RdsServiceTest {
     }
 
     @Test
+    void tagOperationsRejectWrongPartitionWithoutChangingResources() {
+        DbInstance instance = rdsService.createDbInstance("partition-db", "postgres", "13",
+                "admin", "password", "dbname", "db.t3.micro", 20, false, null, null, null);
+        DbCluster cluster = rdsService.createDbCluster("partition-cluster", "postgres", "13",
+                "admin", "password", "dbname", false, null);
+        DbSubnetGroup subnetGroup = rdsService.createDbSubnetGroup(
+                "partition-subnets", "test", PROXY_SUBNET_IDS, "us-east-1");
+        DbParameterGroup parameterGroup = rdsService.createDbParameterGroup(
+                "partition-parameters", "postgres16", "test");
+        for (String arn : List.of(instance.getDbInstanceArn(), cluster.getDbClusterArn(),
+                subnetGroup.getDbSubnetGroupArn(), parameterGroup.getDbParameterGroupArn())) {
+            rdsService.addTagsToResource(arn, Map.of("env", "original"));
+            String wrongPartition = arn.replace("arn:aws:", "arn:aws-cn:");
+            assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
+                    () -> rdsService.listTagsForResource(wrongPartition)).getErrorCode());
+            assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
+                    () -> rdsService.addTagsToResource(wrongPartition, Map.of("env", "changed"))).getErrorCode());
+            assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
+                    () -> rdsService.removeTagsFromResource(wrongPartition, List.of("env"))).getErrorCode());
+            assertEquals(Map.of("env", "original"), rdsService.listTagsForResource(arn));
+        }
+    }
+
+    @Test
     void tagOperationsRejectTypelessRdsArn() {
         // Real AWS rejects an RDS ARN whose resource part is not <type>:<id> with InvalidParameterValue;
         // previously this fell back to a DB-instance lookup and returned DBInstanceNotFound.
