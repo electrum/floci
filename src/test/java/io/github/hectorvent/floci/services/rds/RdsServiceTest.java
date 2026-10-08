@@ -1091,6 +1091,43 @@ class RdsServiceTest {
     }
 
     @Test
+    void deleteDbInstanceDeletesManagedMasterPasswordSecret() {
+        SecretsManagerService secretsManager = mock(SecretsManagerService.class);
+        Secret secret = new Secret();
+        String secretArn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-secret";
+        secret.setArn(secretArn);
+        when(secretsManager.createSecret(any(), any(), eq(null), any(), eq(null), any(), eq("rds"), eq("us-east-1")))
+                .thenReturn(secret);
+        RdsService service = newService(containerManager, proxyManager,
+                new InMemoryStorage<>(), new InMemoryStorage<>(),
+                new InMemoryStorage<>(), new InMemoryStorage<>(), secretsManager);
+        service.createDbInstance("mydb", "postgres", "13",
+                "admin", null, "dbname", "db.t3.micro",
+                20, true, null, null, null, true, null);
+
+        service.deleteDbInstance("mydb");
+
+        verify(secretsManager).deleteSecret(secretArn, null, true, "us-east-1");
+        assertEquals(0, service.listDbInstances(null).size());
+    }
+
+    @Test
+    void deleteDbInstanceDoesNotDeleteSecretsForUnmanagedPassword() {
+        SecretsManagerService secretsManager = mock(SecretsManagerService.class);
+        RdsService service = newService(containerManager, proxyManager,
+                new InMemoryStorage<>(), new InMemoryStorage<>(),
+                new InMemoryStorage<>(), new InMemoryStorage<>(), secretsManager);
+        service.createDbInstance("mydb", "postgres", "13",
+                "admin", "password", "dbname", "db.t3.micro",
+                20, true, null, null, null);
+
+        service.deleteDbInstance("mydb");
+
+        verify(secretsManager, never()).deleteSecret(any(), any(), anyBoolean(), any());
+        assertEquals(0, service.listDbInstances(null).size());
+    }
+
+    @Test
     void createDbClusterWithManagedMasterPasswordCreatesSecret() {
         when(config.services().rds().mock()).thenReturn(true);
         SecretsManagerService secretsManager = mock(SecretsManagerService.class);

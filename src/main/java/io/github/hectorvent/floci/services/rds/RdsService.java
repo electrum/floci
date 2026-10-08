@@ -3786,6 +3786,14 @@ public class RdsService implements Resettable, ResourceProvider {
                         resolvedInstanceStorageResourceId(instance),
                         resolvedInstanceDockerVolumeName(instance));
             }
+            String secretArn = instance.getMasterUserSecretArn();
+            if (secretArn != null && secretsManagerService != null) {
+                try {
+                    secretsManagerService.deleteSecret(secretArn, null, true, effectiveRegion);
+                } catch (RuntimeException e) {
+                    LOG.debugv(e, "Managed master user secret {0} could not be deleted", secretArn);
+                }
+            }
         } else {
             // Cluster member — remove from cluster's member list
             DbCluster cluster = findClusterForScope(
