@@ -1114,7 +1114,7 @@ class RdsServiceTest {
     }
 
     @Test
-    void deleteDbInstanceRejectsReplicatedSecretBeforeChangingDatabase() {
+    void deleteDbInstanceCompletesWhenManagedSecretHasReplicas() {
         StorageFactory factory = mock(StorageFactory.class);
         when(factory.<Secret>create(eq("secretsmanager"), any(), any()))
                 .thenReturn(AccountAwareStorageBackend.inMemory("123456789012"));
@@ -1132,30 +1132,20 @@ class RdsServiceTest {
         String secretArn = instance.getMasterUserSecretArn();
         secretsManager.replicateSecretToRegions(secretArn,
                 List.of(new SecretsManagerService.ReplicaRegion("us-west-2", null)), false, "us-east-1");
-        DbInstanceStatus originalStatus = instance.getStatus();
-        String originalContainerId = instance.getContainerId();
         clearInvocations(containerManager, proxyManager);
 
-        AwsException failure = assertThrows(AwsException.class,
-                () -> service.deleteDbInstance("replicated-secret-db"));
-
-        assertEquals("InvalidRequestException", failure.getErrorCode());
-        assertEquals(originalStatus, instance.getStatus());
-        assertEquals(originalContainerId, instance.getContainerId());
-        verifyNoInteractions(containerManager, proxyManager);
-        assertNotNull(secretsManager.getSecretValue(secretArn, null, null, "us-east-1"));
-
-        secretsManager.removeRegionsFromReplication(secretArn, List.of("us-west-2"), "us-east-1");
         service.deleteDbInstance("replicated-secret-db");
 
         assertTrue(service.listDbInstances(null).isEmpty());
-        AwsException missing = assertThrows(AwsException.class,
-                () -> secretsManager.describeSecret(secretArn, "us-east-1"));
-        assertEquals("ResourceNotFoundException", missing.getErrorCode());
+        verify(containerManager).stop(any());
+        verify(containerManager).removeVolume(any(), any(), any());
+        verify(proxyManager).stopProxy(any());
+        assertNotNull(secretsManager.getSecretValue(secretArn, null, null, "us-east-1"));
+        assertNotNull(secretsManager.describeSecret(secretArn, "us-east-1").getReplicationStatus());
     }
 
     @Test
-    void deleteDbInstanceKeepsManagedSecretReferenceWhenCleanupFails() {
+    void deleteDbInstanceCompletesWhenSecretCleanupFails() {
         SecretsManagerService secretsManager = mock(SecretsManagerService.class);
         Secret secret = new Secret();
         String secretArn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-secret";
@@ -1169,18 +1159,13 @@ class RdsServiceTest {
                 "admin", null, "dbname", "db.t3.micro",
                 20, true, null, null, null, true, null);
 
-        AwsException deletionFailure = new AwsException("InvalidRequestException", "Remove replicas first", 400);
         when(secretsManager.deleteSecret(secretArn, null, true, "us-east-1"))
-                .thenThrow(deletionFailure).thenReturn(secret);
-
-        assertSame(deletionFailure, assertThrows(AwsException.class, () -> service.deleteDbInstance("mydb")));
-        assertEquals(secretArn, service.getDbInstance("mydb").getMasterUserSecretArn());
-        assertEquals(DbInstanceStatus.DELETING, service.getDbInstance("mydb").getStatus());
+                .thenThrow(new IllegalStateException("Secret cleanup unavailable"));
 
         service.deleteDbInstance("mydb");
 
-        verify(secretsManager, times(2)).deleteSecret(secretArn, null, true, "us-east-1");
-        assertEquals(0, service.listDbInstances(null).size());
+        verify(secretsManager).deleteSecret(secretArn, null, true, "us-east-1");
+        assertTrue(service.listDbInstances(null).isEmpty());
     }
 
     @Test

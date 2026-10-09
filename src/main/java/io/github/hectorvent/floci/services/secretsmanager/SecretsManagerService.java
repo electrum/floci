@@ -658,26 +658,6 @@ public class SecretsManagerService implements ResourceProvider {
 
     public record Filter(String key, List<String> values) {}
 
-    /** Checks force-delete prerequisites without changing the secret or its replicas. */
-    public void validateForceDeleteSecret(String secretId, String region) {
-        Secret resolved = resolveSecret(secretId, region);
-        synchronized (lockFor(resolved.getArn())) {
-            requireDeletableSecret(resolveSecret(resolved.getArn(), region));
-        }
-    }
-
-    private void requireDeletableSecret(Secret secret) {
-        throwIfReplica(secret);
-        // AWS: "You can't delete a primary secret that is replicated to other Regions. You must
-        // first delete the replicas." Deleting it here would strand every replica with no primary
-        // to sync from and no way to remove them.
-        if (secret.getReplicationStatus() != null && !secret.getReplicationStatus().isEmpty()) {
-            throw new AwsException("InvalidRequestException",
-                    "You can't delete a secret that is replicated to other Regions. "
-                            + "Remove the replicas with RemoveRegionsFromReplication first.", 400);
-        }
-    }
-
     public Secret deleteSecret(String secretId, Integer recoveryWindowInDays, boolean forceDelete, String region) {
         // Parameters are checked before the secret is resolved, the way AWS orders it: an invalid
         // window is reported as such even when the secret does not exist.
@@ -696,7 +676,15 @@ public class SecretsManagerService implements ResourceProvider {
         Secret resolved = resolveSecret(secretId, region);
         synchronized (lockFor(resolved.getArn())) {
             Secret secret = resolveSecret(resolved.getArn(), region);
-            requireDeletableSecret(secret);
+            throwIfReplica(secret);
+            // AWS: "You can't delete a primary secret that is replicated to other Regions. You must
+            // first delete the replicas." Deleting it here would strand every replica with no primary
+            // to sync from and no way to remove them.
+            if (secret.getReplicationStatus() != null && !secret.getReplicationStatus().isEmpty()) {
+                throw new AwsException("InvalidRequestException",
+                        "You can't delete a secret that is replicated to other Regions. "
+                                + "Remove the replicas with RemoveRegionsFromReplication first.", 400);
+            }
             String storageKey = regionKey(region, secret.getName());
 
             if (forceDelete) {

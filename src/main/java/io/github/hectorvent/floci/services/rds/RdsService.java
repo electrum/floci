@@ -2605,14 +2605,21 @@ public class RdsService implements Resettable, ResourceProvider {
         if (secretArn == null || secretsManagerService == null) {
             return;
         }
+        detachManagedMasterUserSecret(secretArn, region);
+        cluster.setMasterUserSecretArn(null);
+        cluster.setMasterUserSecretStatus(null);
+        cluster.setMasterUserSecretKmsKeyId(null);
+    }
+
+    private void detachManagedMasterUserSecret(String secretArn, String region) {
+        if (secretArn == null || secretsManagerService == null) {
+            return;
+        }
         try {
             secretsManagerService.deleteSecret(secretArn, null, true, region);
         } catch (RuntimeException e) {
             LOG.debugv(e, "Managed master user secret {0} could not be deleted", secretArn);
         }
-        cluster.setMasterUserSecretArn(null);
-        cluster.setMasterUserSecretStatus(null);
-        cluster.setMasterUserSecretKmsKeyId(null);
     }
 
     /**
@@ -3761,18 +3768,6 @@ public class RdsService implements Resettable, ResourceProvider {
         }
 
         String clusterId = instance.getDbClusterIdentifier();
-        if ((clusterId == null || clusterId.isBlank())
-                && instance.getMasterUserSecretArn() != null && secretsManagerService != null) {
-            try {
-                secretsManagerService.validateForceDeleteSecret(instance.getMasterUserSecretArn(), effectiveRegion);
-            } catch (AwsException e) {
-                if (!"ResourceNotFoundException".equals(e.getErrorCode())) {
-                    throw e;
-                }
-                LOG.debugv(e, "Managed master user secret {0} was already deleted", instance.getMasterUserSecretArn());
-            }
-        }
-
         instance.setStatus(DbInstanceStatus.DELETING);
         putInstanceForScope(currentAccountId(), effectiveRegion, id, instance);
         detachReadReplicaLinksBeforeDelete(instance);
@@ -3798,17 +3793,7 @@ public class RdsService implements Resettable, ResourceProvider {
                         resolvedInstanceStorageResourceId(instance),
                         resolvedInstanceDockerVolumeName(instance));
             }
-            String secretArn = instance.getMasterUserSecretArn();
-            if (secretArn != null && secretsManagerService != null) {
-                try {
-                    secretsManagerService.deleteSecret(secretArn, null, true, effectiveRegion);
-                } catch (AwsException e) {
-                    if (!"ResourceNotFoundException".equals(e.getErrorCode())) {
-                        throw e;
-                    }
-                    LOG.debugv(e, "Managed master user secret {0} was already deleted", secretArn);
-                }
-            }
+            detachManagedMasterUserSecret(instance.getMasterUserSecretArn(), effectiveRegion);
         } else {
             // Cluster member — remove from cluster's member list
             DbCluster cluster = findClusterForScope(
