@@ -607,6 +607,9 @@ public class RdsQueryHandler {
         Boolean publiclyAccessible;
         Boolean deletionProtection;
         try {
+            // These request members are accepted, but their modify behavior is not yet emulated.
+            parseOptionalBoolean(params, "MultiAZ");
+            parseOptionalBoolean(params, "ManageMasterUserPassword");
             iamEnabled = parseOptionalBoolean(params, "EnableIAMDatabaseAuthentication");
             autoMinorVersionUpgrade = parseOptionalBoolean(params, "AutoMinorVersionUpgrade");
             publiclyAccessible = parseOptionalBoolean(params, "PubliclyAccessible");

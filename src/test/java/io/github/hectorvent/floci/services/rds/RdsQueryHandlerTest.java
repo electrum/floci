@@ -71,6 +71,8 @@ class RdsQueryHandlerTest {
             "CreateDBInstance, StorageEncrypted",
             "CreateDBInstance, CopyTagsToSnapshot",
             "CreateDBInstance, EnablePerformanceInsights",
+            "ModifyDBInstance, MultiAZ",
+            "ModifyDBInstance, ManageMasterUserPassword",
             "ModifyDBInstance, EnableIAMDatabaseAuthentication",
             "ModifyDBInstance, CopyTagsToSnapshot",
             "ModifyDBInstance, EnablePerformanceInsights"
@@ -134,7 +136,8 @@ class RdsQueryHandlerTest {
         // Encryption is not a ModifyDBInstance request member and remains ignored.
         p.putSingle("StorageEncrypted", "yes");
         if (value != null) {
-            for (String name : List.of("EnableIAMDatabaseAuthentication", "CopyTagsToSnapshot", "EnablePerformanceInsights")) {
+            for (String name : List.of("MultiAZ", "ManageMasterUserPassword", "EnableIAMDatabaseAuthentication",
+                    "CopyTagsToSnapshot", "EnablePerformanceInsights")) {
                 p.putSingle(name, value);
             }
         }
