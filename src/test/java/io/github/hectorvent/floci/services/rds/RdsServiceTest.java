@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.rds;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
@@ -9,6 +10,7 @@ import io.github.hectorvent.floci.core.common.docker.DockerHostResolver;
 import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
 import io.github.hectorvent.floci.core.storage.InMemoryStorage;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
+import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
 import io.github.hectorvent.floci.services.ec2.model.Subnet;
 import io.github.hectorvent.floci.services.ec2.model.Vpc;
@@ -1109,6 +1111,47 @@ class RdsServiceTest {
 
         verify(secretsManager).deleteSecret(secretArn, null, true, "us-east-1");
         assertEquals(0, service.listDbInstances(null).size());
+    }
+
+    @Test
+    void deleteDbInstanceRejectsReplicatedSecretBeforeChangingDatabase() {
+        StorageFactory factory = mock(StorageFactory.class);
+        when(factory.<Secret>create(eq("secretsmanager"), any(), any()))
+                .thenReturn(AccountAwareStorageBackend.inMemory("123456789012"));
+        EmulatorConfig.SecretsManagerServiceConfig secretsConfig = mock(EmulatorConfig.SecretsManagerServiceConfig.class);
+        when(config.services().secretsmanager()).thenReturn(secretsConfig);
+        when(secretsConfig.defaultRecoveryWindowDays()).thenReturn(30);
+        SecretsManagerService secretsManager = new SecretsManagerService(
+                factory, config, regionResolver, null, new ObjectMapper(), null);
+        RdsService service = newService(containerManager, proxyManager,
+                new InMemoryStorage<>(), new InMemoryStorage<>(),
+                new InMemoryStorage<>(), new InMemoryStorage<>(), secretsManager);
+        DbInstance instance = service.createDbInstance("replicated-secret-db", "postgres", "13",
+                "admin", null, "dbname", "db.t3.micro",
+                20, true, null, null, null, true, null);
+        String secretArn = instance.getMasterUserSecretArn();
+        secretsManager.replicateSecretToRegions(secretArn,
+                List.of(new SecretsManagerService.ReplicaRegion("us-west-2", null)), false, "us-east-1");
+        DbInstanceStatus originalStatus = instance.getStatus();
+        String originalContainerId = instance.getContainerId();
+        clearInvocations(containerManager, proxyManager);
+
+        AwsException failure = assertThrows(AwsException.class,
+                () -> service.deleteDbInstance("replicated-secret-db"));
+
+        assertEquals("InvalidRequestException", failure.getErrorCode());
+        assertEquals(originalStatus, instance.getStatus());
+        assertEquals(originalContainerId, instance.getContainerId());
+        verifyNoInteractions(containerManager, proxyManager);
+        assertNotNull(secretsManager.getSecretValue(secretArn, null, null, "us-east-1"));
+
+        secretsManager.removeRegionsFromReplication(secretArn, List.of("us-west-2"), "us-east-1");
+        service.deleteDbInstance("replicated-secret-db");
+
+        assertTrue(service.listDbInstances(null).isEmpty());
+        AwsException missing = assertThrows(AwsException.class,
+                () -> secretsManager.describeSecret(secretArn, "us-east-1"));
+        assertEquals("ResourceNotFoundException", missing.getErrorCode());
     }
 
     @Test

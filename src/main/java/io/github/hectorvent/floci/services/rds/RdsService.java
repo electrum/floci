@@ -3760,6 +3760,19 @@ public class RdsService implements Resettable, ResourceProvider {
                     "DB instance " + id + " is registered with a DB proxy target group.", 400);
         }
 
+        String clusterId = instance.getDbClusterIdentifier();
+        if ((clusterId == null || clusterId.isBlank())
+                && instance.getMasterUserSecretArn() != null && secretsManagerService != null) {
+            try {
+                secretsManagerService.validateForceDeleteSecret(instance.getMasterUserSecretArn(), effectiveRegion);
+            } catch (AwsException e) {
+                if (!"ResourceNotFoundException".equals(e.getErrorCode())) {
+                    throw e;
+                }
+                LOG.debugv(e, "Managed master user secret {0} was already deleted", instance.getMasterUserSecretArn());
+            }
+        }
+
         instance.setStatus(DbInstanceStatus.DELETING);
         putInstanceForScope(currentAccountId(), effectiveRegion, id, instance);
         detachReadReplicaLinksBeforeDelete(instance);
@@ -3769,7 +3782,6 @@ public class RdsService implements Resettable, ResourceProvider {
             proxyManager.stopProxy(rdsResourceRelayKey(instance.getDbInstanceArn(), id));
         }
 
-        String clusterId = instance.getDbClusterIdentifier();
         if (clusterId == null || clusterId.isBlank()) {
             // Standalone, so stop its container and clean up its Docker volume. Neither exists in
             // mock mode, and an instance with no container and no reachable daemon has nothing
