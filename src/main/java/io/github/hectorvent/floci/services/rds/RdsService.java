@@ -3790,8 +3790,11 @@ public class RdsService implements Resettable, ResourceProvider {
             if (secretArn != null && secretsManagerService != null) {
                 try {
                     secretsManagerService.deleteSecret(secretArn, null, true, effectiveRegion);
-                } catch (RuntimeException e) {
-                    LOG.debugv(e, "Managed master user secret {0} could not be deleted", secretArn);
+                } catch (AwsException e) {
+                    if (!"ResourceNotFoundException".equals(e.getErrorCode())) {
+                        throw e;
+                    }
+                    LOG.debugv(e, "Managed master user secret {0} was already deleted", secretArn);
                 }
             }
         } else {

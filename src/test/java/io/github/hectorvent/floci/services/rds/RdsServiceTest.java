@@ -1112,6 +1112,59 @@ class RdsServiceTest {
     }
 
     @Test
+    void deleteDbInstanceKeepsManagedSecretReferenceWhenCleanupFails() {
+        SecretsManagerService secretsManager = mock(SecretsManagerService.class);
+        Secret secret = new Secret();
+        String secretArn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-secret";
+        secret.setArn(secretArn);
+        when(secretsManager.createSecret(any(), any(), eq(null), any(), eq(null), any(), eq("rds"), eq("us-east-1")))
+                .thenReturn(secret);
+        RdsService service = newService(containerManager, proxyManager,
+                new InMemoryStorage<>(), new InMemoryStorage<>(),
+                new InMemoryStorage<>(), new InMemoryStorage<>(), secretsManager);
+        service.createDbInstance("mydb", "postgres", "13",
+                "admin", null, "dbname", "db.t3.micro",
+                20, true, null, null, null, true, null);
+
+        AwsException deletionFailure = new AwsException("InvalidRequestException", "Remove replicas first", 400);
+        when(secretsManager.deleteSecret(secretArn, null, true, "us-east-1"))
+                .thenThrow(deletionFailure).thenReturn(secret);
+
+        assertSame(deletionFailure, assertThrows(AwsException.class, () -> service.deleteDbInstance("mydb")));
+        assertEquals(secretArn, service.getDbInstance("mydb").getMasterUserSecretArn());
+        assertEquals(DbInstanceStatus.DELETING, service.getDbInstance("mydb").getStatus());
+
+        service.deleteDbInstance("mydb");
+
+        verify(secretsManager, times(2)).deleteSecret(secretArn, null, true, "us-east-1");
+        assertEquals(0, service.listDbInstances(null).size());
+    }
+
+    @Test
+    void deleteDbInstanceToleratesAlreadyMissingManagedSecret() {
+        SecretsManagerService secretsManager = mock(SecretsManagerService.class);
+        Secret secret = new Secret();
+        String secretArn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-secret";
+        secret.setArn(secretArn);
+        when(secretsManager.createSecret(any(), any(), eq(null), any(), eq(null), any(), eq("rds"), eq("us-east-1")))
+                .thenReturn(secret);
+        RdsService service = newService(containerManager, proxyManager,
+                new InMemoryStorage<>(), new InMemoryStorage<>(),
+                new InMemoryStorage<>(), new InMemoryStorage<>(), secretsManager);
+        service.createDbInstance("mydb", "postgres", "13",
+                "admin", null, "dbname", "db.t3.micro",
+                20, true, null, null, null, true, null);
+
+        when(secretsManager.deleteSecret(secretArn, null, true, "us-east-1"))
+                .thenThrow(new AwsException("ResourceNotFoundException", "Secret already removed", 400));
+
+        service.deleteDbInstance("mydb");
+
+        verify(secretsManager).deleteSecret(secretArn, null, true, "us-east-1");
+        assertEquals(0, service.listDbInstances(null).size());
+    }
+
+    @Test
     void deleteDbInstanceDoesNotDeleteSecretsForUnmanagedPassword() {
         SecretsManagerService secretsManager = mock(SecretsManagerService.class);
         RdsService service = newService(containerManager, proxyManager,
