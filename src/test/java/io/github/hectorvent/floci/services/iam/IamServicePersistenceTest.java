@@ -28,6 +28,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+import static io.github.hectorvent.floci.services.iam.InlinePolicyTestHelper.policyWithNonWhitespaceLength;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -270,11 +271,5 @@ class IamServicePersistenceTest {
         PersistentStorage<String, V> backend = new PersistentStorage<>(dir.resolve(file), type);
         backend.load();
         return backend;
-    }
-
-    private static String policyWithNonWhitespaceLength(int targetLength) {
-        String prefix = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"";
-        String suffix = "\",\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"*\"}]}";
-        return prefix + "x".repeat(targetLength - prefix.length() - suffix.length()) + suffix;
     }
 }

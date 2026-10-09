@@ -40,6 +40,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.github.hectorvent.floci.services.iam.InlinePolicyTestHelper.policyWithNonWhitespaceLength;
 import static org.junit.jupiter.api.Assertions.*;
 
 class IamServiceTest {
@@ -138,12 +139,6 @@ class IamServiceTest {
         assertEquals(1, accepted.get());
         assertEquals(1, rejected.get());
         assertEquals(1, iamService.listRolePolicies("R").size());
-    }
-
-    private static String policyWithNonWhitespaceLength(int targetLength) {
-        String prefix = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"";
-        String suffix = "\",\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"*\"}]}";
-        return prefix + "x".repeat(targetLength - prefix.length() - suffix.length()) + suffix;
     }
 
     /** The STS global endpoint, and so the token version it reports, exists only in the commercial partition. */
