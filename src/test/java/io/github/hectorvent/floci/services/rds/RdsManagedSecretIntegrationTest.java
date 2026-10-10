@@ -28,6 +28,9 @@ class RdsManagedSecretIntegrationTest {
     @Inject
     KmsService kmsService;
 
+    @Inject
+    RdsService rdsService;
+
     @ParameterizedTest
     @ValueSource(strings = {"us-east-1", "cn-north-1"})
     void sdkReportsTheActualDefaultManagedKeyForInstancesAndClusters(String region) {
@@ -50,6 +53,7 @@ class RdsManagedSecretIntegrationTest {
             try {
                 String keyArn = kmsService.describeKey("alias/aws/secretsmanager", region).getArn();
                 assertEquals(keyArn, instance.masterUserSecret().kmsKeyId());
+                rdsService.getDbInstance(id, region).setMasterUserSecretKmsKeyId(null);
                 assertEquals(keyArn, rds.describeDBInstances(request -> request.dbInstanceIdentifier(id))
                         .dbInstances().getFirst().masterUserSecret().kmsKeyId());
 
@@ -61,6 +65,7 @@ class RdsManagedSecretIntegrationTest {
                         .manageMasterUserPassword(true)).dbCluster();
                 try {
                     assertEquals(keyArn, cluster.masterUserSecret().kmsKeyId());
+                    rdsService.getDbCluster(id, region).setMasterUserSecretKmsKeyId(null);
                     assertEquals(keyArn, rds.describeDBClusters(request -> request.dbClusterIdentifier(id))
                             .dbClusters().getFirst().masterUserSecret().kmsKeyId());
                 } finally {
