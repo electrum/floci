@@ -724,6 +724,8 @@ public class RdsService implements Resettable, ResourceProvider {
         if (manageMasterUserPassword && (masterPassword == null || masterPassword.isBlank())) {
             masterPassword = generatedMasterPassword();
         }
+        String effectiveSecretKmsKeyId = manageMasterUserPassword
+                ? resolveManagedSecretKmsKeyId(masterUserSecretKmsKeyId, effectiveRegion) : null;
         // Always reserve a unique port (even in mock) so endpoints stay distinct and usedPorts
         // is consistent; mock mode only skips starting the container and auth proxy.
         int proxyPort = reserveProxyPort(requestedPort);
@@ -826,7 +828,7 @@ public class RdsService implements Resettable, ResourceProvider {
         instance.setDbiResourceId(dbiResourceId);
         instance.setDbInstanceArn(dbInstanceArn);
         if (manageMasterUserPassword) {
-            attachManagedMasterUserSecret(instance, effectiveRegion, masterUserSecretKmsKeyId);
+            attachManagedMasterUserSecret(instance, effectiveRegion, masterUserSecretKmsKeyId, effectiveSecretKmsKeyId);
         }
 
         String accountId = accountIdFromArn(instance.getDbInstanceArn());
@@ -2528,13 +2530,21 @@ public class RdsService implements Resettable, ResourceProvider {
         }
     }
 
-    private void attachManagedMasterUserSecret(DbInstance instance, String region, String kmsKeyId) {
+    private String resolveManagedSecretKmsKeyId(String kmsKeyId, String region) {
         if (secretsManagerService == null) {
             throw new AwsException("InvalidParameterCombination",
                     "ManageMasterUserPassword requires Secrets Manager support.", 400);
         }
-        String effectiveKmsKeyId = kmsKeyId != null ? kmsKeyId
+        return kmsKeyId != null ? kmsKeyId
                 : kmsService.describeKey("alias/aws/secretsmanager", region).getArn();
+    }
+
+    private void attachManagedMasterUserSecret(DbInstance instance, String region, String kmsKeyId,
+                                               String effectiveKmsKeyId) {
+        if (secretsManagerService == null) {
+            throw new AwsException("InvalidParameterCombination",
+                    "ManageMasterUserPassword requires Secrets Manager support.", 400);
+        }
         String secretName = "rds!" + instance.getDbiResourceId();
         // RDS owns the secret it manages: it rotates the master password itself, so the secret
         // carries no rotation Lambda. AWS marks that with OwningService and these two tags.
@@ -2572,13 +2582,12 @@ public class RdsService implements Resettable, ResourceProvider {
         }
     }
 
-    private void attachManagedMasterUserSecret(DbCluster cluster, String region, String kmsKeyId) {
+    private void attachManagedMasterUserSecret(DbCluster cluster, String region, String kmsKeyId,
+                                               String effectiveKmsKeyId) {
         if (secretsManagerService == null) {
             throw new AwsException("InvalidParameterCombination",
                     "ManageMasterUserPassword requires Secrets Manager support.", 400);
         }
-        String effectiveKmsKeyId = kmsKeyId != null ? kmsKeyId
-                : kmsService.describeKey("alias/aws/secretsmanager", region).getArn();
         String secretName = "rds!" + cluster.getDbClusterResourceId();
         // RDS owns the secret it manages: it rotates the master password itself, so the secret
         // carries no rotation Lambda. AWS marks that with OwningService and these two tags.
@@ -3973,6 +3982,8 @@ public class RdsService implements Resettable, ResourceProvider {
         PlacementResolution placement = resolvePlacement(dbSubnetGroupName, availabilityZone, multiAz, effectiveRegion);
 
         boolean mock = config.services().rds().mock();
+        String effectiveSecretKmsKeyId = manageMasterUserPassword
+                ? resolveManagedSecretKmsKeyId(masterUserSecretKmsKeyId, effectiveRegion) : null;
         // Always reserve a unique port (even in mock) so endpoints stay distinct and usedPorts
         // is consistent; mock mode only skips starting the container and auth proxy.
         int proxyPort = reserveProxyPort(requestedPort);
@@ -4018,7 +4029,7 @@ public class RdsService implements Resettable, ResourceProvider {
         cluster.setDbClusterArn(clusterArn);
 
         if (manageMasterUserPassword) {
-            attachManagedMasterUserSecret(cluster, effectiveRegion, masterUserSecretKmsKeyId);
+            attachManagedMasterUserSecret(cluster, effectiveRegion, masterUserSecretKmsKeyId, effectiveSecretKmsKeyId);
         }
 
         try {
@@ -4413,6 +4424,9 @@ public class RdsService implements Resettable, ResourceProvider {
             effectiveAutoPauseSeconds = validateServerlessV2ScalingConfiguration(
                     effectiveMinCapacity, effectiveMaxCapacity, requestedOrExistingAutoPause);
         }
+        String effectiveSecretKmsKeyId = Boolean.TRUE.equals(manageMasterUserPassword)
+                && cluster.getMasterUserSecretArn() == null
+                ? resolveManagedSecretKmsKeyId(masterUserSecretKmsKeyId, effectiveRegion) : null;
         boolean passwordRotated = false;
         if (newPassword != null && !newPassword.isBlank()) {
             String oldPassword = cluster.getMasterPassword();
@@ -4436,7 +4450,7 @@ public class RdsService implements Resettable, ResourceProvider {
             if (cluster.getMasterPassword() == null || cluster.getMasterPassword().isBlank()) {
                 cluster.setMasterPassword(generatedMasterPassword());
             }
-            attachManagedMasterUserSecret(cluster, effectiveRegion, masterUserSecretKmsKeyId);
+            attachManagedMasterUserSecret(cluster, effectiveRegion, masterUserSecretKmsKeyId, effectiveSecretKmsKeyId);
         } else if (Boolean.FALSE.equals(manageMasterUserPassword) && cluster.getMasterUserSecretArn() != null) {
             detachManagedMasterUserSecret(cluster, effectiveRegion);
         } else if (cluster.getMasterUserSecretArn() != null

@@ -1213,20 +1213,63 @@ class RdsServiceTest {
         assertEquals(0, service.listDbInstances(null).size());
     }
 
-    @Test
-    void defaultManagedKeyResolutionFailureDoesNotCreateASecret() {
-        when(config.services().rds().mock()).thenReturn(true);
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void defaultManagedKeyFailureLeavesCreateRetryable(boolean cluster, boolean mock) {
+        when(config.services().rds().mock()).thenReturn(mock);
+        when(rdsConfig.proxyMaxPort()).thenReturn(7000);
         doThrow(new AwsException("NotFoundException", "Key not found", 404))
                 .when(kmsService).describeKey("alias/aws/secretsmanager", "us-east-1");
         SecretsManagerService secretsManager = mock(SecretsManagerService.class);
         RdsService service = newService(containerManager, proxyManager,
                 new InMemoryStorage<>(), new InMemoryStorage<>(),
                 new InMemoryStorage<>(), new InMemoryStorage<>(), secretsManager);
-        AwsException failure = assertThrows(AwsException.class, () ->
+        Runnable create = () -> {
+            if (cluster) {
+                service.createDbCluster("mydb", "aurora-postgresql", "16.3",
+                        "admin", null, "dbname", false, null, null, null, false, "us-east-1",
+                        null, null, null, true, null);
+            } else {
                 service.createDbInstance("mydb", "postgres", "13", "admin", null,
-                        "dbname", "db.t3.micro", 20, true, null, null, null, true, null));
-        assertEquals("NotFoundException", failure.getErrorCode());
-        verifyNoInteractions(secretsManager);
+                        "dbname", "db.t3.micro", 20, true, null, null, null, true, null);
+            }
+        };
+        assertEquals("NotFoundException", assertThrows(AwsException.class, create::run).getErrorCode());
+        verifyNoInteractions(secretsManager, containerManager, proxyManager);
+        assertTrue(service.listDbInstances(null).isEmpty());
+        assertTrue(service.listDbClusters(null).isEmpty());
+
+        KmsKey key = new KmsKey();
+        key.setArn("arn:aws:kms:us-east-1:123456789012:key/secrets-manager");
+        doReturn(key).when(kmsService).describeKey("alias/aws/secretsmanager", "us-east-1");
+        Secret secret = new Secret();
+        secret.setArn("arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!retry");
+        when(secretsManager.createSecret(any(), any(), eq(null), any(), eq(null), any(), eq("rds"), eq("us-east-1")))
+                .thenReturn(secret);
+        create.run();
+        assertEquals(7000, cluster ? service.getDbCluster("mydb").getProxyPort()
+                : service.getDbInstance("mydb").getProxyPort());
+    }
+
+    @Test
+    void defaultManagedKeyFailureDoesNotModifyCluster() {
+        rdsService = newService(containerManager, proxyManager,
+                new InMemoryStorage<>(), new InMemoryStorage<>(),
+                new InMemoryStorage<>(), new InMemoryStorage<>(), mock(SecretsManagerService.class));
+        DbCluster cluster = rdsService.createDbCluster("cluster1", "postgres", "13",
+                "admin", "original-password", "dbname", false, null);
+        clearInvocations(containerManager, proxyManager);
+        doThrow(new AwsException("NotFoundException", "Key not found", 404))
+                .when(kmsService).describeKey("alias/aws/secretsmanager", "us-east-1");
+
+        assertEquals("NotFoundException", assertThrows(AwsException.class, () ->
+                rdsService.modifyDbCluster("cluster1", "changed-password", true,
+                        null, null, null, true, null, "us-east-1")).getErrorCode());
+
+        assertEquals("original-password", cluster.getMasterPassword());
+        assertFalse(cluster.isIamDatabaseAuthenticationEnabled());
+        assertNull(cluster.getMasterUserSecretArn());
+        verifyNoInteractions(containerManager, proxyManager);
     }
 
     @Test
