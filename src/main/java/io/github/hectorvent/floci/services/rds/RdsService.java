@@ -9187,8 +9187,8 @@ public class RdsService implements Resettable, ResourceProvider {
         // The model documents the subscription as created but inactive when Enabled is false, and
         // says nothing about a default, so an omitted Enabled activates it as the console does.
         subscription.setEnabled(enabled == null || enabled);
-        subscription.setEventSubscriptionArn(AwsArnUtils.Arn.of("rds", region, accountId,
-                "es:" + subscriptionName).toString());
+        subscription.setEventSubscriptionArn(regionResolver.buildArn("rds", region,
+                "es:" + subscriptionName));
         subscription.setTags(tags == null ? new LinkedHashMap<>() : new LinkedHashMap<>(tags));
         eventSubscriptions.put(key, subscription);
         return subscription;
