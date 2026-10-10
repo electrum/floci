@@ -9300,6 +9300,7 @@ public class RdsService implements Resettable, ResourceProvider {
         }
         String prefix = eventSubscriptionKey(region, "");
         List<EventSubscription> all = eventSubscriptions.scan(k -> k.startsWith(prefix)).stream()
+                .map(subscription -> normalizeEventSubscriptionArn(region, subscription))
                 .sorted(Comparator.comparing(EventSubscription::getCustSubscriptionId))
                 .toList();
         // The marker is the last name of the previous page and the next page starts after it.
@@ -9322,8 +9323,28 @@ public class RdsService implements Resettable, ResourceProvider {
 
     private EventSubscription requireEventSubscription(String region, String subscriptionName) {
         return eventSubscriptions.get(eventSubscriptionKey(region, subscriptionName))
+                .map(subscription -> normalizeEventSubscriptionArn(region, subscription))
                 .orElseThrow(() -> new AwsException("SubscriptionNotFound",
                         "Subscription " + subscriptionName + " not found.", 404));
+    }
+
+    private EventSubscription normalizeEventSubscriptionArn(String region, EventSubscription subscription) {
+        String accountId = subscription.getCustomerAwsId();
+        String name = subscription.getCustSubscriptionId();
+        if (accountId == null || name == null) {
+            return subscription;
+        }
+        String resource = "es:" + name;
+        String legacyArn = AwsArnUtils.Arn.of("rds", region, accountId, resource).toString();
+        String expectedArn = new AwsArnUtils.Arn(regionResolver.partitionForRegion(region),
+                "rds", region, accountId, resource).toString();
+        // Earlier versions minted custom-region subscriptions with the catalog's fallback
+        // partition. Repair only that exact legacy identity, preserving its stored owner.
+        if (legacyArn.equals(subscription.getEventSubscriptionArn()) && !legacyArn.equals(expectedArn)) {
+            subscription.setEventSubscriptionArn(expectedArn);
+            eventSubscriptions.put(eventSubscriptionKey(region, name), subscription);
+        }
+        return subscription;
     }
 
     // ── Cluster endpoints ─────────────────────────────────────────────────────

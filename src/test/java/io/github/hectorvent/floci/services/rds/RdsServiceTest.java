@@ -1919,6 +1919,46 @@ class RdsServiceTest {
         assertEquals(Map.of(), rdsService.listTagsForResource(arn, region));
     }
 
+    @ParameterizedTest
+    @CsvSource({"true", "false"})
+    void describeRepairsLegacyCustomRegionSubscriptionArns(boolean named) {
+        regionResolver = new RegionResolver("cn-north-1", "222222222222");
+        rdsService = newService(containerManager, proxyManager,
+                new InMemoryStorage<>(), new InMemoryStorage<>(),
+                new InMemoryStorage<>(), new InMemoryStorage<>(), new InMemoryStorage<>());
+        String region = "xx-nowhere-9";
+        String arn = rdsService.createEventSubscription(region, "legacy-events",
+                regionResolver.buildArn("sns", region, "rds-events"), null,
+                List.of(), List.of(), true, Map.of("env", "original")).getEventSubscriptionArn();
+        rdsService.describeEventSubscriptions(region, "legacy-events", null, null)
+                .subscriptions().getFirst().setEventSubscriptionArn(arn.replace("arn:aws-cn:", "arn:aws:"));
+
+        String restoredArn = rdsService.describeEventSubscriptions(
+                region, named ? "legacy-events" : null, null, null)
+                .subscriptions().getFirst().getEventSubscriptionArn();
+
+        assertEquals("arn:aws-cn:rds:xx-nowhere-9:222222222222:es:legacy-events", restoredArn);
+        assertEquals(Map.of("env", "original"), rdsService.listTagsForResource(restoredArn, region));
+        rdsService.addTagsToResource(restoredArn, Map.of("env", "changed"), region);
+        assertEquals(Map.of("env", "changed"), rdsService.listTagsForResource(restoredArn, region));
+        rdsService.removeTagsFromResource(restoredArn, List.of("env"), region);
+        assertEquals(Map.of(), rdsService.listTagsForResource(restoredArn, region));
+        String legacyArn = restoredArn.replace("arn:aws-cn:", "arn:aws:");
+        assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
+                () -> rdsService.listTagsForResource(legacyArn, region)).getErrorCode());
+        assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
+                () -> rdsService.addTagsToResource(legacyArn, Map.of("env", "wrong"), region)).getErrorCode());
+        assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
+                () -> rdsService.removeTagsFromResource(legacyArn, List.of("env"), region)).getErrorCode());
+        assertEquals(Map.of(), rdsService.listTagsForResource(restoredArn, region));
+        String unrelatedArn = legacyArn.replace(":es:legacy-events", ":es:other-events");
+        rdsService.describeEventSubscriptions(region, "legacy-events", null, null)
+                .subscriptions().getFirst().setEventSubscriptionArn(unrelatedArn);
+        assertEquals(unrelatedArn, rdsService.describeEventSubscriptions(
+                region, named ? "legacy-events" : null, null, null)
+                .subscriptions().getFirst().getEventSubscriptionArn());
+    }
+
     @Test
     void dbProxyTargetGroupTagOperationsRejectMissingTargetGroup() {
         AwsException exception = assertThrows(AwsException.class, () ->
